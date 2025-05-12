@@ -10,21 +10,24 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Connect to MongoDB
+// Set EJS as the templating engine
+app.set('view engine', 'ejs');
+
+// MongoDB connection
 mongoose.connect(process.env.MONGODB_URI, {
     useNewUrlParser: true,
     useUnifiedTopology: true
 });
-
 const db = mongoose.connection;
 db.on('error', console.error.bind(console, 'connection error:'));
 db.once('open', () => console.log('Connected to MongoDB'));
 
-// MongoDB Schema
+// MongoDB schema
 const userSchema = new mongoose.Schema({
     name: String,
     email: String,
-    password: String
+    password: String,
+    user_type: String
 });
 const User = mongoose.model('User', userSchema);
 
@@ -41,85 +44,56 @@ app.use(session({
         collectionName: 'sessions',
         crypto: { secret: process.env.MONGODB_SESSION_SECRET }
     }),
-    cookie: { maxAge: 1000 * 60 * 60 } // 1 hour
+    cookie: { maxAge: 1000 * 60 * 60 }
 }));
 
 // Authentication middleware
 function isAuthenticated(req, res, next) {
-    if (req.session.user) {
-        next();
-    } else {
-        res.redirect('/');
-    }
+    if (req.session.user) return next();
+    res.redirect('/login');
 }
 
-// ROUTES
+function isAdmin(req, res, next) {
+    if (req.session.user?.user_type === 'admin') return next();
+    res.status(403).render('403'); // optional custom error
+}
 
-// Home Page
+// Routes
 app.get('/', (req, res) => {
-    if (!req.session.user) {
-        res.send(`
-            <h1>Welcome to the Home Page</h1>
-            <a href="/signup">Sign Up</a><br>
-            <a href="/login">Login</a>
-        `);
-    } else {
-        res.send(`
-            <h1>Hello, ${req.session.user.name}</h1>
-            <a href="/members">Go to Members Area</a><br>
-            <a href="/logout">Logout</a>
-        `);
-    }
+    res.render('index', { user: req.session.user });
 });
 
-// Signup GET
 app.get('/signup', (req, res) => {
-    res.send(`
-        <form method="POST" action="/signup">
-            Name: <input name="name" /><br>
-            Email: <input name="email" type="email" /><br>
-            Password: <input name="password" type="password" /><br>
-            <button type="submit">Sign Up</button>
-        </form>
-    `);
+    res.render('signup');
 });
 
-// Signup POST
 app.post('/signup', async (req, res) => {
     const schema = Joi.object({
         name: Joi.string().max(30).required(),
         email: Joi.string().email().required(),
-        password: Joi.string().min(5).max(30).required()
+        password: Joi.string().min(5).max(30).required(),
+        user_type: Joi.string().valid('user', 'admin').default('user')
     });
 
-    const { error } = schema.validate(req.body);
-    if (error) {
-        return res.send(`<p>${error.details[0].message}</p><a href="/signup">Try again</a>`);
-    }
+    const { error, value } = schema.validate(req.body);
+    if (error) return res.send(`<p>${error.details[0].message}</p><a href="/signup">Try again</a>`);
 
-    const hashedPassword = await bcrypt.hash(req.body.password, 10);
-    await User.create({
-        name: req.body.name,
-        email: req.body.email,
-        password: hashedPassword
+    const hashedPassword = await bcrypt.hash(value.password, 10);
+    const newUser = await User.create({
+        name: value.name,
+        email: value.email,
+        password: hashedPassword,
+        user_type: value.user_type
     });
 
-    req.session.user = { name: req.body.name, email: req.body.email };
+    req.session.user = { name: newUser.name, email: newUser.email, user_type: newUser.user_type };
     res.redirect('/members');
 });
 
-// Login GET
 app.get('/login', (req, res) => {
-    res.send(`
-        <form method="POST" action="/login">
-            Email: <input name="email" type="email" /><br>
-            Password: <input name="password" type="password" /><br>
-            <button type="submit">Log In</button>
-        </form>
-    `);
+    res.render('login');
 });
 
-// Login POST
 app.post('/login', async (req, res) => {
     const schema = Joi.object({
         email: Joi.string().email().required(),
@@ -127,49 +101,59 @@ app.post('/login', async (req, res) => {
     });
 
     const { error } = schema.validate(req.body);
-    if (error) {
-        return res.send(`<p>${error.details[0].message}</p><a href="/login">Try again</a>`);
-    }
+    if (error) return res.send(`<p>${error.details[0].message}</p><a href="/login">Try again</a>`);
 
     const user = await User.findOne({ email: req.body.email });
-    if (!user) {
-        return res.send('<p>User not found</p><a href="/login">Try again</a>');
-    }
+    if (!user) return res.send('<p>User not found</p><a href="/login">Try again</a>');
 
     const validPassword = await bcrypt.compare(req.body.password, user.password);
-    if (!validPassword) {
-        return res.send('<p>Invalid password</p><a href="/login">Try again</a>');
-    }
+    if (!validPassword) return res.send('<p>Invalid password</p><a href="/login">Try again</a>');
 
-    req.session.user = { name: user.name, email: user.email };
+    req.session.user = { name: user.name, email: user.email, user_type: user.user_type };
     res.redirect('/members');
 });
 
-// Members Page
 app.get('/members', isAuthenticated, (req, res) => {
     const images = ['cat1.jpg', 'cat2.jpg', 'cat3.jpg'];
-    const randomImg = images[Math.floor(Math.random() * images.length)];
-
-    res.send(`
-        <h1>Hello, ${req.session.user.name}</h1>
-        <img src="/${randomImg}" width="300"><br>
-        <a href="/logout">Logout</a>
-    `);
+    res.render('cats', { user: req.session.user, images });
 });
 
-// Logout
+
+app.get('/admin', isAuthenticated, async (req, res) => {
+    if (req.session.user.user_type !== 'admin') {
+        return res.render('index', { user: req.session.user });
+    }
+
+    const users = await User.find();
+    res.render('admin', { users });
+});
+
+app.get('/promote/:id', isAuthenticated, isAdmin, async (req, res) => {
+    await User.updateOne(
+        { _id: req.params.id },
+        { $set: { user_type: 'admin' } }
+    );
+    res.redirect('/admin');
+});
+
+app.get('/demote/:id', isAuthenticated, isAdmin, async (req, res) => {
+    await User.updateOne(
+        { _id: req.params.id },
+        { $set: { user_type: 'user' } }
+    );
+    res.redirect('/admin');
+});
+
 app.get('/logout', (req, res) => {
-    req.session.destroy(err => {
+    req.session.destroy(() => {
         res.redirect('/');
     });
 });
 
-// 404 Handler
 app.use((req, res) => {
-    res.status(404).send('<h1>404 Page Not Found</h1>');
+    res.status(404).render('404');
 });
 
-// Start server
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
 });

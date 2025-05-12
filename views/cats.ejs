@@ -1,0 +1,16 @@
+<%- include("templates/header") %>
+
+<h1>Hello, <%= user.name %></h1>
+<p>You are a <strong><%= user.user_type %></strong>.</p>
+
+<div class="row">
+  <% images.forEach(img => { %>
+    <div class="col-md-4 mb-3">
+      <img src="/<%= img %>" class="img-fluid rounded">
+    </div>
+  <% }) %>
+</div>
+
+<a href="/logout" class="btn btn-danger">Logout</a>
+
+<%- include("templates/footer") %>
