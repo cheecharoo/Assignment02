@@ -11,5 +11,8 @@
     "mongoose": "^8.14.2",
     "node": "^24.0.1",
     "path": "^0.12.7"
+  },
+  "scripts": {
+    "start": "node index.js"
   }
 }
