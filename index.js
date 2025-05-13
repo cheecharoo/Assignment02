@@ -119,11 +119,7 @@ app.get('/members', isAuthenticated, (req, res) => {
 });
 
 
-app.get('/admin', isAuthenticated, async (req, res) => {
-    if (req.session.user.user_type !== 'admin') {
-        return res.render('index', { user: req.session.user });
-    }
-
+app.get('/admin', isAdmin, async (req, res) => {
     const users = await User.find();
     res.render('admin', { users });
 });
